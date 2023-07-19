@@ -314,6 +314,7 @@ class SetFitModel(PyTorchModelHubMixin):
                     logits = outputs["logits"]
 
                     loss = criterion(logits, labels)
+                    print(f"Epoch: {epoch_idx}, Batch: {batch_idx}, Training Loss: {loss.item()}")
                     loss.backward()
                     optimizer.step()
 
