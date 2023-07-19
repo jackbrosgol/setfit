@@ -263,6 +263,7 @@ class SetFitModel(PyTorchModelHubMixin):
         l2_weight: float = 1e-2,
         normalize_embeddings: bool = False,
     ) -> None:
+        print("init")
         super(SetFitModel, self).__init__()
         self.model_body = model_body
         self.model_head = model_head
@@ -322,6 +323,7 @@ class SetFitModel(PyTorchModelHubMixin):
         else:  # train with sklearn
             embeddings = self.model_body.encode(x_train, normalize_embeddings=self.normalize_embeddings)
             self.model_head.fit(embeddings, y_train)
+            print(f"Epoch: {epoch_idx}, Batch: {batch_idx}, Training Loss: {loss.item()}")
 
     def _prepare_dataloader(
         self,
