@@ -278,10 +278,13 @@ class SetFitModel(PyTorchModelHubMixin):
         # if False, sklearn is assumed to be used instead
         return isinstance(self.model_head, nn.Module)
 
+
     def fit(
         self,
         x_train: List[str],
         y_train: Union[List[int], List[List[int]]],
+        x_val: List[str],
+        y_val: Union[List[int], List[List[int]]],
         num_epochs: int,
         batch_size: Optional[int] = None,
         learning_rate: Optional[float] = None,
@@ -290,40 +293,107 @@ class SetFitModel(PyTorchModelHubMixin):
         max_length: Optional[int] = None,
         show_progress_bar: Optional[bool] = None,
     ) -> None:
-        if self.has_differentiable_head:  # train with pyTorch
+        if self.has_differentiable_head:
             device = self.model_body.device
             self.model_body.train()
             self.model_head.train()
-
-            dataloader = self._prepare_dataloader(x_train, y_train, batch_size, max_length)
+    
+            train_dataloader = self._prepare_dataloader(x_train, y_train, batch_size, max_length)
+            val_dataloader = self._prepare_dataloader(x_val, y_val, batch_size, max_length)
             criterion = self.model_head.get_loss_fn()
             optimizer = self._prepare_optimizer(learning_rate, body_learning_rate, l2_weight)
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+            
             for epoch_idx in trange(num_epochs, desc="Epoch", disable=not show_progress_bar):
-                for batch in dataloader:
+                # Training
+                train_loss = 0
+                for batch in train_dataloader:
                     features, labels = batch
                     optimizer.zero_grad()
-
-                    # to model's device
                     features = {k: v.to(device) for k, v in features.items()}
                     labels = labels.to(device)
-
                     outputs = self.model_body(features)
                     if self.normalize_embeddings:
                         outputs = torch.nn.functional.normalize(outputs, p=2, dim=1)
                     outputs = self.model_head(outputs)
                     logits = outputs["logits"]
-
                     loss = criterion(logits, labels)
-                    print(f"Epoch: {epoch_idx}, Batch: {batch_idx}, Training Loss: {loss.item()}")
+                    train_loss += loss.item()
                     loss.backward()
                     optimizer.step()
-
+                train_loss /= len(train_dataloader)
+                
+                # Evaluation
+                self.model_body.eval()
+                self.model_head.eval()
+                eval_loss = 0
+                with torch.no_grad():
+                    for batch in val_dataloader:
+                        features, labels = batch
+                        features = {k: v.to(device) for k, v in features.items()}
+                        labels = labels.to(device)
+                        outputs = self.model_body(features)
+                        if self.normalize_embeddings:
+                            outputs = torch.nn.functional.normalize(outputs, p=2, dim=1)
+                        outputs = self.model_head(outputs)
+                        logits = outputs["logits"]
+                        loss = criterion(logits, labels)
+                        eval_loss += loss.item()
+                eval_loss /= len(val_dataloader)
+                
+                print(f"Epoch: {epoch_idx+1}/{num_epochs} | Train Loss: {train_loss:.4f} | Eval Loss: {eval_loss:.4f}")
+                
                 scheduler.step()
-        else:  # train with sklearn
-            embeddings = self.model_body.encode(x_train, normalize_embeddings=self.normalize_embeddings)
-            self.model_head.fit(embeddings, y_train)
-            print(f"Epoch: {epoch_idx}, Batch: {batch_idx}, Training Loss: {loss.item()}")
+                self.model_body.train()
+                self.model_head.train()
+
+
+    # def fit(
+    #     self,
+    #     x_train: List[str],
+    #     y_train: Union[List[int], List[List[int]]],
+    #     num_epochs: int,
+    #     batch_size: Optional[int] = None,
+    #     learning_rate: Optional[float] = None,
+    #     body_learning_rate: Optional[float] = None,
+    #     l2_weight: Optional[float] = None,
+    #     max_length: Optional[int] = None,
+    #     show_progress_bar: Optional[bool] = None,
+    # ) -> None:
+    #     if self.has_differentiable_head:  # train with pyTorch
+    #         device = self.model_body.device
+    #         self.model_body.train()
+    #         self.model_head.train()
+
+    #         dataloader = self._prepare_dataloader(x_train, y_train, batch_size, max_length)
+    #         criterion = self.model_head.get_loss_fn()
+    #         optimizer = self._prepare_optimizer(learning_rate, body_learning_rate, l2_weight)
+    #         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+    #         for epoch_idx in trange(num_epochs, desc="Epoch", disable=not show_progress_bar):
+    #             for batch in dataloader:
+    #                 features, labels = batch
+    #                 optimizer.zero_grad()
+
+    #                 # to model's device
+    #                 features = {k: v.to(device) for k, v in features.items()}
+    #                 labels = labels.to(device)
+
+    #                 outputs = self.model_body(features)
+    #                 if self.normalize_embeddings:
+    #                     outputs = torch.nn.functional.normalize(outputs, p=2, dim=1)
+    #                 outputs = self.model_head(outputs)
+    #                 logits = outputs["logits"]
+
+    #                 loss = criterion(logits, labels)
+    #                 print(f"Epoch: {epoch_idx}, Batch: {batch_idx}, Training Loss: {loss.item()}")
+    #                 loss.backward()
+    #                 optimizer.step()
+
+    #             scheduler.step()
+    #     else:  # train with sklearn
+    #         embeddings = self.model_body.encode(x_train, normalize_embeddings=self.normalize_embeddings)
+    #         self.model_head.fit(embeddings, y_train)
+    #         print(f"Epoch: {epoch_idx}, Batch: {batch_idx}, Training Loss: {loss.item()}")
 
     def _prepare_dataloader(
         self,
